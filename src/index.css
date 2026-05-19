@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+@media print {
+  @page { margin: 1cm; size: a4 landscape; }
+  body { 
+    background: white; 
+    -webkit-print-color-adjust: exact; 
+    print-color-adjust: exact; 
+    height: auto !important;
+    overflow: visible !important;
+  }
+  
+  #root {
+    display: contents; /* Ensure root doesn't constrain height */
+  }
+
+  /* Hide unnecessary elements */
+  header, 
+  .print\:hidden {
+    display: none !important;
+  }
+  
+  /* Ensure main content takes full width and removes shadow/border for clean print */
+  main {
+    padding: 0 !important;
+    max-width: none !important;
+    height: auto !important;
+    overflow: visible !important;
+    display: block !important;
+  }
+  
+  .bg-white {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    page-break-inside: auto;
+  }
+
+  tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+
+  th, td {
+    border: 1px solid #e2e8f0;
+    padding: 8px !important;
+  }
+
+  /* Keep the charts visible */
+  .recharts-wrapper {
+    break-inside: avoid;
+  }
+}
