@@ -26,6 +26,7 @@ import {
   Lock,
   UserCircle,
   Eye,
+  EyeOff,
   LogOut,
   X,
   Printer,
@@ -33,7 +34,7 @@ import {
 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, CartesianGrid, Legend } from 'recharts';
 import * as XLSX from 'xlsx';
-import { mockData as initialMockData } from './data/mockData';
+import { supabase } from './lib/supabase';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'overview' | 'monthly' | 'import' | 'entry'>('dashboard');
@@ -49,17 +50,41 @@ export default function App() {
     }
     return [];
   });
+  
+  const [dbStatus, setDbStatus] = useState<{message: string; isError: boolean} | null>(null);
+
+  React.useEffect(() => {
+    if (supabase) {
+      const fetchSupabaseData = async () => {
+        try {
+          const { data, error } = await supabase.from('cssd_records').select('*').order('id', { ascending: false });
+          if (error) throw error;
+          if (data) {
+             setAppData(data);
+             setDbStatus({ message: 'เชื่อมต่อ Supabase สำเร็จแล้ว', isError: false });
+          }
+        } catch (err: any) {
+          console.error("Supabase Error:", err);
+          setDbStatus({ message: `ข้อผิดพลาดเชื่อมต่อ Supabase: ${err.message}. กรุณาสร้างตาราง 'cssd_records' หรือกดยอมรับใน AI Studio. ตอนนี้กำลังใช้ LocalStorage แทน.`, isError: true });
+        }
+      };
+      fetchSupabaseData();
+    } else {
+      setDbStatus({ message: 'ยังไม่ได้เชื่อมต่อ Supabase (จำกัดการทำงานที่ LocalStorage) โปรดกำหนดตัวแปร VITE_SUPABASE_URL และ VITE_SUPABASE_ANON_KEY', isError: true });
+    }
+  }, []);
 
   React.useEffect(() => {
     localStorage.setItem('app_data', JSON.stringify(appData));
   }, [appData]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Admin and Auth states
+   // Admin and Auth states
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
   const [loginError, setLoginError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   
   // Public Views Tracking
   const [publicViews, setPublicViews] = useState(() => {
@@ -72,11 +97,14 @@ export default function App() {
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (loginForm.username === 'admin' && loginForm.password === 'admin123') {
+    const secureUsername = import.meta.env.VITE_ADMIN_USERNAME || 'admin';
+    const securePassword = import.meta.env.VITE_ADMIN_PASSWORD || 'admin123';
+    if (loginForm.username === secureUsername && loginForm.password === securePassword) {
       setIsLoggedIn(true);
       setShowLoginModal(false);
       setLoginError('');
       setLoginForm({ username: '', password: '' });
+      setShowPassword(false);
     } else {
       setLoginError('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
     }
@@ -135,9 +163,24 @@ export default function App() {
       reader2: formData.reader2,
     };
 
-    setAppData(prev => [newRecord, ...prev]);
-    setEntrySuccess(true);
-    setTimeout(() => setEntrySuccess(false), 3000);
+    const saveRecord = async () => {
+      if (supabase && !dbStatus?.isError) {
+        try {
+          const { error } = await supabase.from('cssd_records').insert([newRecord]);
+          if (error) {
+            console.error('Supabase Error', error);
+            alert(`ไม่สามารถบันทึกข้อมูลลงฐานข้อมูลได้: ${error.message}\n(โปรดตรวจสอบ RLS Policy ใน Supabase ว่าตั้งค่าให้อนุญาตการ Insert/Select สาธาณะหรือไม่)`);
+          }
+        } catch (err: any) {
+          console.error('Failed to save to Supabase', err);
+          alert(`เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล: ${err.message}`);
+        }
+      }
+      setAppData(prev => [newRecord, ...prev]);
+      setEntrySuccess(true);
+      setTimeout(() => setEntrySuccess(false), 3000);
+    };
+    saveRecord();
   };
 
   const processImportedData = (data: any[]) => {
@@ -200,15 +243,30 @@ export default function App() {
       };
     });
 
-    setAppData(prev => {
-        // Find existing IDs to avoid duplicates if imported multiple times
-        const existingIds = new Set(prev.map(p => p.id));
-        const newItems = formattedData.filter(d => !existingIds.has(d.id));
-        return [...newItems, ...prev];
-    });
-    setImportSuccess(true);
-    setTimeout(() => setImportSuccess(false), 3000);
-    setSheetUrl('');
+    const saveImportedData = async () => {
+      // Finding existing logic locally first is fine, but realistically we should insert to Supabase.
+      // Easiest is to save everything or use onConflict, but since this is mock logic we'll just insert non-duplicates.
+      setAppData(prev => {
+          const existingIds = new Set(prev.map(p => p.id));
+          const newItems = formattedData.filter(d => !existingIds.has(d.id));
+          
+          if (supabase && !dbStatus?.isError && newItems.length > 0) {
+            supabase.from('cssd_records').insert(newItems).then(({error}) => {
+              if (error) {
+                console.error('Supabase import error', error);
+                alert(`ไม่สามารถนำเข้าข้อมูลลงฐานข้อมูลได้: ${error.message}`);
+              }
+            });
+          }
+
+          return [...newItems, ...prev];
+      });
+      
+      setImportSuccess(true);
+      setTimeout(() => setImportSuccess(false), 3000);
+      setSheetUrl('');
+    };
+    saveImportedData();
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -464,8 +522,13 @@ export default function App() {
             {isLoggedIn ? (
               <div className="flex items-center space-x-3">
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     if (window.confirm('คุณต้องการรีเซ็ตข้อมูลทั้งหมดหรือไม่? (การกระทำนี้ไม่สามารถย้อนกลับได้)')) {
+                       if (supabase && !dbStatus?.isError) {
+                         try {
+                           await supabase.from('cssd_records').delete().neq('id', '0');
+                         } catch (err) {}
+                       }
                        setAppData([]);
                        localStorage.removeItem('app_data');
                     }
@@ -500,6 +563,13 @@ export default function App() {
           </div>
         </div>
       </header>
+      
+      {/* Database Connection Status Banner */}
+      {dbStatus && dbStatus.isError && (
+        <div className="bg-rose-50 border-b border-rose-200 px-4 py-3 text-sm text-rose-700 font-medium flex justify-center print:hidden">
+          {dbStatus.message}
+        </div>
+      )}
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         
@@ -1242,19 +1312,33 @@ export default function App() {
                     value={loginForm.username}
                     onChange={e => setLoginForm({...loginForm, username: e.target.value})}
                     className="block w-full px-4 py-3 bg-[#fcfbf9] border border-[#e8e4db] rounded-xl focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 sm:text-sm transition-all"
-                    placeholder="admin"
+                    placeholder="ระบุชื่อผู้ใช้ (Username)"
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">รหัสผ่าน (Password)</label>
-                  <input 
-                    type="password"
-                    required
-                    value={loginForm.password}
-                    onChange={e => setLoginForm({...loginForm, password: e.target.value})}
-                    className="block w-full px-4 py-3 bg-[#fcfbf9] border border-[#e8e4db] rounded-xl focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 sm:text-sm transition-all"
-                    placeholder="••••••••"
-                  />
+                  <div className="relative">
+                    <input 
+                      type={showPassword ? "text" : "password"}
+                      required
+                      value={loginForm.password}
+                      onChange={e => setLoginForm({...loginForm, password: e.target.value})}
+                      className="block w-full pl-4 pr-11 py-3 bg-[#fcfbf9] border border-[#e8e4db] rounded-xl focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 sm:text-sm transition-all"
+                      placeholder="••••••••"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-slate-600 transition-colors"
+                      title={showPassword ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน"}
+                    >
+                      {showPassword ? (
+                        <EyeOff className="w-5 h-5" />
+                      ) : (
+                        <Eye className="w-5 h-5" />
+                      )}
+                    </button>
+                  </div>
                 </div>
                 
                 {loginError && (
@@ -1267,9 +1351,6 @@ export default function App() {
                 >
                   เข้าสู่ระบบ
                 </button>
-                <div className="text-center mt-4">
-                    <p className="text-xs text-slate-400">ข้อมูลทดสอบ Username: <span className="font-mono text-slate-600">admin</span> / Password: <span className="font-mono text-slate-600">admin123</span></p>
-                </div>
               </form>
             </div>
           </div>

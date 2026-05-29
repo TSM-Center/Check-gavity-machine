@@ -1,6 +1,6 @@
 {
-  "name": "",
-  "description": "",
+  "name": "CSSD Performance Monitor",
+  "description": "ระบบบันทึกและตรวจสอบประสิทธิภาพงานปราศจากเชื้อของเครื่องมือแพทย์ (CSSD) เชื่อมต่อกับ Supabase",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
